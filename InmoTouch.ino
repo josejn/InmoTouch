@@ -50,7 +50,6 @@ bool GREEN_STATUS = false;
 bool NO_TOUCH = true;
 bool TOUCH = false;
 
-int OLD_STATUS = -1;
 int OLD_TOUCH_STATUS = NO_TOUCH;
 
 //========== Melodies definition: access, welcome and rejection
@@ -250,111 +249,131 @@ int readTouchSensor(unsigned ms_between_touchs) {
 
 //========== Events ==========
 void on_init() {
-  stopEngine();
-  onOrange();
-  if (OLD_STATUS != INIT) {
-    OLD_STATUS = MAIN_STATUS;
-    Serial.println("New Status is INIT");
-  }
-
+  //Transition to WORKSHOP
   if (EEPROM.read(WORKSHOP_MEM) == WORKSHOP_ON) {
+    onOrange();
     MAIN_STATUS = WORKSHOP;
     Serial.println("EEPROM contains WORKSHOP mode");
-  } else {
+    Serial.println("New Status is WORKSHOP");
+    startEngine();
+  } 
+  //Transition to LOCKED
+  else {
     MAIN_STATUS = LOCKED;
+    onRed();
+    stopEngine();
     Serial.println("EEPROM NO WORKSHOP mode");
+    Serial.println("New Status is LOCKED");
   }
 }
 
 void on_locked() {
-  if (OLD_STATUS != LOCKED) {
-    OLD_STATUS = MAIN_STATUS;
-    onRed();
-    stopEngine();
-    Serial.println("New Status is LOCKED");
-  }
 
+  //Transition to UNLOCKED_WAITING
   if (START_TOUCHS == readTouchSensor(TIME_TOUCHS)) {
     MAIN_STATUS = UNLOCKED_WAITING;
+    onGreen();
+    startEngine();
+    Serial.println("New Status is UNLOCKED_WAITING");
   }
+}
+
+void on_unlocked_waiting() {
+  unsigned long timer = millis() + IDLE_TIME;
+  bool acc = digitalRead(ACC_PIN);
+
+  while ((acc = digitalRead(ACC_PIN)) == ACC_OFF) {
+    int touchs_read = readTouchSensor(TIME_TOUCHS);
+
+    //Transition to LOCKED by time
+    if (timer <= millis()) {
+      Serial.println("Max IDLE time! Locking engine");
+      MAIN_STATUS = LOCKED;
+      onRed();
+      stopEngine();
+      soundKO();
+      return;
+    }
+
+    //Transition to WORKSHOP
+    if (START_TOUCHS_WORKSHOP_TOGGLE == touchs_read) {
+      onOrange();
+      MAIN_STATUS = WORKSHOP;
+      Serial.println("New Status is WORKSHOP");
+      startEngine();
+      onOrange();
+      soundCloned();
+      return;
+
+    }
+
+    //Transition to LOCKED MANUALLY
+    else if (touchs_read == STOP_TOUCHS) {
+      onRed();
+      stopEngine();
+      soundKO();
+      MAIN_STATUS = LOCKED;
+      return;
+    }
+
+    blinkRed();
+    delay(250);
+  }
+
+  //Transition to UNLOCKED
+  onGreen();
+  startEngine();
+  Serial.println("New Status is UNLOCKED");
+  soundOK_and_Contact();
+  MAIN_STATUS = UNLOCKED;
 
 }
 
 void on_unlocked() {
-  if (OLD_STATUS != UNLOCKED) {
-    OLD_STATUS = MAIN_STATUS;
-    onGreen();
-    startEngine();
-    EEPROM.update(WORKSHOP_MEM, WORKSHOP_OFF);
-    Serial.println("New Status is UNLOCKED");
-    soundOK_and_Contact();
-  }
   bool acc = ACC_ON;
   while (acc == ACC_ON) {
     acc = digitalRead(ACC_PIN);
     int touchs_read = readTouchSensor(TIME_TOUCHS);
+
+    //Transition to WORKSHOP
     if (START_TOUCHS_WORKSHOP_TOGGLE == touchs_read) {
+      onOrange();
+      Serial.println("New Status is WORKSHOP");
+      EEPROM.update(WORKSHOP_MEM, WORKSHOP_ON);
+      soundCloned();
       MAIN_STATUS = WORKSHOP;
       return;
-    } else if (touchs_read == CHEATS) {
+    }
+
+    //Only cheat with no transitions
+    else if (touchs_read == CHEATS) {
       soundCheat();
-    } else if (touchs_read == STOP_TOUCHS) {
+    }
+
+    //Transition to LOCKED MANUALLY
+    else if (touchs_read == STOP_TOUCHS) {
+      onRed();
+      stopEngine();
+      soundKO();
       MAIN_STATUS = LOCKED;
       return;
     }
   }
+
+  onGreen();
+  startEngine();
+  Serial.println("New Status is UNLOCKED_WAITING");
   MAIN_STATUS = UNLOCKED_WAITING;
 }
 
-void on_unlocked_waiting() {
-  if (OLD_STATUS != UNLOCKED_WAITING) {
-    OLD_STATUS = MAIN_STATUS;
-    onGreen();
-    startEngine();
-    Serial.println("New Status is UNLOCKED_WAITING");
-
-    unsigned long timer = millis() + IDLE_TIME;
-    bool acc = digitalRead(ACC_PIN);
-    while ((acc = digitalRead(ACC_PIN))== ACC_OFF) {
-      if (timer <= millis()) {
-        Serial.println("Max IDLE time! Locking engine");
-        MAIN_STATUS = LOCKED;
-        soundKO();
-        return;
-      }
-      int touchs_read = readTouchSensor(TIME_TOUCHS);
-      if (START_TOUCHS_WORKSHOP_TOGGLE == touchs_read) {
-        MAIN_STATUS = WORKSHOP;
-        return;
-      } else if (touchs_read == CHEATS) {
-        soundCheat();
-      } else if (touchs_read == STOP_TOUCHS) {
-        MAIN_STATUS = LOCKED;
-        return;
-      }
-      blinkRed();
-      delay(250);
-    }
-    MAIN_STATUS = UNLOCKED;
-  }
-}
-
 void on_workshop() {
-  if (OLD_STATUS != WORKSHOP) {
-    OLD_STATUS = MAIN_STATUS;
-    Serial.println("New Status is WORKSHOP");
-    EEPROM.update(WORKSHOP_MEM, WORKSHOP_ON);
-    startEngine();
-    soundCloned();
-  }
-  onOrange();
-
   int touchs_read = readTouchSensor(TIME_TOUCHS);
   if (START_TOUCHS_WORKSHOP_TOGGLE == touchs_read) {
+    onGreen();
+    Serial.println("New Status is UNLOCKED");
+    EEPROM.update(WORKSHOP_MEM, WORKSHOP_OFF);
+    soundOK();
     MAIN_STATUS = UNLOCKED;
-    return;
-  } else if (touchs_read == CHEATS) {
-    soundCheat();
   }
 }
 
@@ -366,6 +385,11 @@ void setup() {
   pinMode(TOUCH_PIN, INPUT);
   pinMode(GREEN_LED_PIN, OUTPUT);
   pinMode(RED_LED_PIN, OUTPUT);
+
+  stopEngine();
+  onRed();
+  Serial.println("New Status is INIT");
+  MAIN_STATUS == INIT;
 }
 
 void loop() {
@@ -373,7 +397,6 @@ void loop() {
   if (MAIN_STATUS == INIT) {
     on_init();
   }
-
 
   else if (MAIN_STATUS == LOCKED) {
     on_locked();
